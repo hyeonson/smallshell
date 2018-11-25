@@ -30,14 +30,16 @@ void zombie_handler(int sig);
 int main(int argc, char **argv)
 {
     int i = 0;
-    
-    act.sa_flags = SA_RESTART; //시그널 핸들러에 의해 중지된 시스템 호출을 자동적으로 재시작한다.
+
+    //시그널 핸들러에 의해 중지된 시스템 호출을 자동적으로 재시작한다.
+    act.sa_flags = SA_RESTART;
 	sigemptyset(&act.sa_mask);
 	act.sa_handler = zombie_handler;
 	sigaction(SIGCHLD, &act, 0);
     
     signal(SIGINT, SIG_IGN);
     signal(SIGQUIT, SIG_IGN);
+
     signal(SIGTTOU, SIG_IGN);
     
     
@@ -150,6 +152,8 @@ void execute_cmdgrp(char* cmdgrp)
     int background;
 
     signal(SIGINT, SIG_DFL);
+    signal(SIGQUIT, SIG_DFL);
+
     setpgid(0, 0);
 
     background = isBackground(cmdgrp);
@@ -190,11 +194,4 @@ void zombie_handler(int sig)
 {
     int status;
     int pid = waitpid(-1, &status, WNOHANG);
-
-    if(pid > 0)
-    {
-        printf("background process child %d terminated normaly\n", pid) ;
-        fputs(prompt, stdout);
-        fflush(stdout);
-    }
 }

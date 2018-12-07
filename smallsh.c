@@ -10,19 +10,27 @@
 
 #define MAX_CMD_ARG 10
 #define MAX_CMD_GRP 10
+#define MAX_CMD_LIST 10
+
 const char* prompt = "myshell> ";
 
 struct sigaction act;
 
-char* cmdgrps[MAX_CMD_GRP];
-char* cmdvector[MAX_CMD_ARG];
 char cmdline[BUFSIZ];
+char* cmdgrps[MAX_CMD_GRP];
+char* cmdvectors[MAX_CMD_LIST];
+char* cmdargs[MAX_CMD_ARG];
 
 void fatal(char* str);
 void execute_cmdline(char* cmdline);
 void execute_cmdgrp(char* cmdgrp);
+void execute_cmdarg(char* cmdarg);
+
 int makelist(char* s, const char* delimiters, char** list, int MAX_LIST);
 int isBackground(char* s);
+
+void parsing_redirect(char* cmdarg);
+
 int cmd_exit(int argc, char* argv[]);
 int cmd_cd(int argc, char* argv[]);
 void zombie_handler(int sig);
@@ -102,17 +110,18 @@ void execute_cmdline(char* cmdline)
         memcpy(cmdgrpstemp, cmdgrps[i], strlen(cmdgrps[i]) + 1);
         background = isBackground(cmdgrpstemp);
 
-        arg_count = makelist(cmdgrpstemp, " \t", cmdvector, MAX_CMD_ARG);
-        if(strcmp(cmdvector[0], "cd") == 0)
+        arg_count = makelist(cmdgrpstemp, " \t", cmdvectors, MAX_CMD_LIST);
+        if(strcmp(cmdvectors[0], "cd") == 0)
         {
-            cmd_cd(arg_count, cmdvector);
+            cmd_cd(arg_count, cmdvectors);
             continue;
         }
-        else if(strcmp(cmdvector[0], "exit") == 0)
+        else if(strcmp(cmdvectors[0], "exit") == 0)
         {
-            cmd_exit(arg_count, cmdvector);
+            cmd_exit(arg_count, cmdvectors);
             return;
         }
+
         switch(pid = fork())
         {
             case -1:
@@ -150,6 +159,7 @@ void execute_cmdgrp(char* cmdgrp)
     int i = 0;
     int count = 0;
     int background;
+    int fd[2];
 
     signal(SIGINT, SIG_DFL);
     signal(SIGQUIT, SIG_DFL);
@@ -159,9 +169,39 @@ void execute_cmdgrp(char* cmdgrp)
     background = isBackground(cmdgrp);
     if(background == 0)
         tcsetpgrp(STDIN_FILENO, getpgid(0));
+
+    count = makelist(cmdgrp, "|", cmdvectors, MAX_CMD_LIST);
+    //count = makelist(cmdgrp, " \t", cmdvector, MAX_CMD_ARG);
+    for(i = 0; i < count - 1; i++)
+    {
+		pipe(fd);
+		switch(fork())
+		{
+			case -1:
+                fatal("fork error");
+                break;
+            case  0:
+                close(fd[0]);
+                dup2(fd[1], STDOUT_FILENO);
+                execute_cmdargs(cmdvectors[i]);
+            default:
+                close(fd[1]);
+                dup2(fd[0], STDIN_FILENO);
+		}
+	}
+	execute_cmdargs(cmdvectors[i]);
+
+    //execvp(cmdvector[0], cmdvector);
+    //fatal("exec error");
+}
+
+void execute_cmdargs(char* cmdarg)
+{
+    parsing_redirect(cmdarg);
     
-    count = makelist(cmdgrp, " \t", cmdvector, MAX_CMD_ARG);
-    execvp(cmdvector[0], cmdvector);
+    makelist(cmdarg, " \t", cmdargs, MAX_CMD_ARG);
+	
+    execvp(cmdargs[0], cmdargs);
     fatal("exec error");
 }
 
@@ -195,3 +235,32 @@ void zombie_handler(int sig)
     int status;
     int pid = waitpid(-1, &status, WNOHANG);
 }
+
+void parsing_redirect(char* cmdarg)
+{
+	char* arg;
+	int fd;
+    int i;
+    
+    for(i = strlen(cmdarg) - 1; i >= 0; i--)
+	{
+        if(cmdarg[i] == '<')
+        {
+            arg = strtok(&cmdarg[i + 1], " \t");
+			if( (fd = open(arg, O_RDONLY | O_CREAT, 0644)) < 0) fatal("open error");
+			dup2(fd, STDIN_FILENO);
+			close(fd);
+			cmdarg[i] = '\0';
+        }
+        else if(cmdarg[i] == '>')
+        {
+            arg = strtok(&cmdarg[i + 1], " \t");
+            if( (fd = open(arg, O_WRONLY | O_CREAT | O_TRUNC, 0644)) < 0) fatal("open error");
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+            cmdarg[i] = '\0';
+        }
+	}
+    
+}
+
